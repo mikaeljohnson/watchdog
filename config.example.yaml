@@ -1,0 +1,10 @@
+# Discord bot token (set in .env)
+DISCORD_TOKEN: ""
+
+# The bot ID that relays snitch pings (Eden Bot)
+# Default: 1446004667678195885
+eden_bot_id: 1446004667678195885
+
+# The role name to ping when a match is found
+# Default: "watchdog"
+watchdog_role_name: "watchdog"
