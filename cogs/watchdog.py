@@ -21,6 +21,12 @@ class Watchdog(commands.Cog):
         guild_only=True,
     )
 
+    channel = app_commands.Group(
+        name="channel",
+        description="Manage watched channels.",
+        parent=group,
+    )
+
     blacklist = app_commands.Group(
         name="blacklist",
         description="Manage the player blacklist.",
@@ -35,18 +41,55 @@ class Watchdog(commands.Cog):
 
     # -- /watchdog channel -------------------------------------------------
 
-    @group.command(name="channel", description="Set the channel to watch for snitch pings.")
+    @channel.command(name="add", description="Add a channel to watch for snitch pings.")
     @app_commands.describe(channel="The channel Eden Bot posts snitch pings in.")
     @app_commands.checks.has_permissions(manage_guild=True)
-    async def channel(
+    async def channel_add(
         self,
         interaction: discord.Interaction,
         channel: discord.TextChannel,
     ) -> None:
-        database.set_watch_channel(interaction.guild_id, channel.id)
+        added = database.add_watch_channel(interaction.guild_id, channel.id)
+        if added:
+            msg = f"Now watching {channel.mention} for snitch pings."
+        else:
+            msg = f"Already watching {channel.mention}."
+        await interaction.response.send_message(msg, ephemeral=True)
+
+    @channel.command(name="remove", description="Stop watching a channel.")
+    @app_commands.describe(channel="The channel to stop watching.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def channel_remove(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+    ) -> None:
+        removed = database.remove_watch_channel(interaction.guild_id, channel.id)
+        if removed:
+            msg = f"Stopped watching {channel.mention}."
+        else:
+            msg = f"Was not watching {channel.mention}."
+        await interaction.response.send_message(msg, ephemeral=True)
+
+    @channel.command(name="list", description="Show all watched channels.")
+    async def channel_list(self, interaction: discord.Interaction) -> None:
+        channels = database.get_watch_channels(interaction.guild_id)
+        if not channels:
+            await interaction.response.send_message(
+                "No channels configured. Use `/watchdog channel add` first.",
+                ephemeral=True,
+            )
+            return
+
+        lines = []
+        for ch_id in channels:
+            ch = interaction.guild.get_channel(ch_id)
+            if ch:
+                lines.append(f"• {ch.mention}")
+            else:
+                lines.append(f"• `#{ch_id}` (deleted?)")
         await interaction.response.send_message(
-            f"Now watching {channel.mention} for snitch pings.",
-            ephemeral=True,
+            "**Watched channels:**\n" + "\n".join(lines), ephemeral=True
         )
 
     # -- /watchdog blacklist ----------------------------------------------
@@ -82,7 +125,6 @@ class Watchdog(commands.Cog):
             )
             return
 
-        # Paginate at 20 entries per message.
         chunk_size = 20
         chunks = [players[i : i + chunk_size] for i in range(0, len(players), chunk_size)]
 
@@ -118,7 +160,6 @@ class Watchdog(commands.Cog):
         y2: int,
         z2: int,
     ) -> None:
-        # Normalize so that the first corner is the minimum on each axis.
         lo_x, hi_x = sorted((x1, x2))
         lo_y, hi_y = sorted((y1, y2))
         lo_z, hi_z = sorted((z1, z2))
@@ -160,6 +201,25 @@ class Watchdog(commands.Cog):
         await interaction.response.send_message(
             "**Monitored zones:**\n" + "\n".join(lines), ephemeral=True
         )
+
+    async def cog_app_command_error(
+        self,
+        interaction: discord.Interaction,
+        error: app_commands.AppCommandError,
+    ) -> None:
+        """Handle errors from watchdog commands gracefully."""
+        if isinstance(error, app_commands.MissingPermissions):
+            msg = "You need **Manage Server** permission to use this command."
+        else:
+            msg = f"Error: {error}"
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(msg, ephemeral=True)
+            else:
+                await interaction.followup.send(msg, ephemeral=True)
+        except Exception:
+            pass
+        print(f"Watchdog error: {error}", flush=True)
 
 
 async def setup(bot: commands.Bot) -> None:

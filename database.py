@@ -23,9 +23,11 @@ def init_db() -> None:
     with _connect() as conn:
         conn.executescript(
             """
-            CREATE TABLE IF NOT EXISTS guild_config (
-                guild_id INTEGER PRIMARY KEY,
-                channel_id INTEGER
+            CREATE TABLE IF NOT EXISTS watched_channels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                UNIQUE(guild_id, channel_id)
             );
             CREATE TABLE IF NOT EXISTS blacklisted_players (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,28 +46,60 @@ def init_db() -> None:
         )
 
 
-def get_watch_channel(guild_id: int) -> int | None:
-    """Return the configured watch channel ID for a guild, or None."""
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT channel_id FROM guild_config WHERE guild_id = ?",
-            (guild_id,),
-        ).fetchone()
-    return row["channel_id"] if row else None
+# -- Watched channels -------------------------------------------------------
+
+def add_watch_channel(guild_id: int, channel_id: int) -> bool:
+    """Add a channel to watch.
+
+    Returns:
+        True if the channel was added, False if already watched.
+    """
+    try:
+        with _connect() as conn:
+            conn.execute(
+                "INSERT INTO watched_channels (guild_id, channel_id) VALUES (?, ?)",
+                (guild_id, channel_id),
+            )
+        return True
+    except sqlite3.IntegrityError:
+        return False
 
 
-def set_watch_channel(guild_id: int, channel_id: int) -> None:
-    """Set (or update) the watch channel for a guild."""
+def remove_watch_channel(guild_id: int, channel_id: int) -> bool:
+    """Remove a watch channel.
+
+    Returns:
+        True if a row was removed, False if the channel was not watched.
+    """
     with _connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO guild_config (guild_id, channel_id)
-            VALUES (?, ?)
-            ON CONFLICT(guild_id) DO UPDATE SET channel_id = excluded.channel_id
-            """,
+        cur = conn.execute(
+            "DELETE FROM watched_channels WHERE guild_id = ? AND channel_id = ?",
             (guild_id, channel_id),
         )
+        return cur.rowcount > 0
 
+
+def get_watch_channels(guild_id: int) -> list[int]:
+    """Return all watched channel IDs for a guild."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT channel_id FROM watched_channels WHERE guild_id = ? ORDER BY channel_id",
+            (guild_id,),
+        ).fetchall()
+    return [row["channel_id"] for row in rows]
+
+
+def is_watched_channel(guild_id: int, channel_id: int) -> bool:
+    """Return True if the channel is being watched."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM watched_channels WHERE guild_id = ? AND channel_id = ? LIMIT 1",
+            (guild_id, channel_id),
+        ).fetchone()
+    return row is not None
+
+
+# -- Blacklist ----------------------------------------------------------------
 
 def add_blacklist(guild_id: int, player_name: str) -> bool:
     """Add a player to the blacklist.
@@ -117,6 +151,8 @@ def is_blacklisted(guild_id: int, player_name: str) -> bool:
         ).fetchone()
     return row is not None
 
+
+# -- Monitored zones ----------------------------------------------------------
 
 def add_monitor(
     guild_id: int,
